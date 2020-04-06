@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/nav_select"
+        android:title="Pick Car Store"
+        android:icon="@drawable/ic_apps_white_24dp"
+        app:showAsAction="always"/>
+
+    <item
+        android:id="@+id/nav_log_out"
+        android:title="Logout"
+        android:icon="@drawable/ic_input_white_24dp"
+        app:showAsAction="always"/>
+</menu>
