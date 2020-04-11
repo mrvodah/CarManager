@@ -7,4 +7,9 @@
     <string name="category_screen">Category Screen</string>
     <string name="scan_screen">Scan Screen</string>
     <string name="home_screen">Home Screen</string>
+
+    <string name="fm_license_plate"><b>License Plate</b>: %s</string>
+    <string name="fm_time_in"><b>Time In</b>: %s</string>
+    <string name="fm_time_out"><b>Time Out</b>: %s</string>
+    <string name="fm_cost"><b>Cost</b>: %d</string>
 </resources>

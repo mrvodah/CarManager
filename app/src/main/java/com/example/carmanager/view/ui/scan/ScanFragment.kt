@@ -2,6 +2,7 @@ package com.example.carmanager.view.ui.scan
 
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ContentUris
 import android.content.Context
@@ -14,6 +15,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
@@ -21,15 +23,33 @@ import androidx.fragment.app.Fragment
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.core.content.ContextCompat.checkSelfPermission
 import androidx.core.content.FileProvider
+import androidx.navigation.fragment.findNavController
 import com.example.carmanager.BuildConfig
 
 import com.example.carmanager.R
+import com.example.carmanager.model.Car
+import com.example.carmanager.model.Parking
+import com.example.carmanager.model.Slot
+import com.example.carmanager.model.Time
+import com.example.carmanager.util.PrefManager
+import com.example.carmanager.util.fmNormalDay
+import com.example.carmanager.util.fmTimeStamp
+import com.example.carmanager.util.fmToDay
 import com.example.carmanager.view.custom.SelectOptionDialogFragment
+import com.example.carmanager.view.ui.category.CategoryFragment
 import com.google.android.gms.vision.Frame
 import com.google.android.gms.vision.text.TextRecognizer
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.DatabaseReference
+import com.google.firebase.database.ValueEventListener
+import com.google.firebase.database.ktx.database
+import com.google.firebase.ktx.Firebase
 import com.theartofdev.edmodo.cropper.CropImage
 import kotlinx.android.synthetic.main.fragment_scan.*
 import java.io.File
@@ -47,6 +67,30 @@ class ScanFragment : Fragment() {
 
     private lateinit var mCurrentPhotoPath: String
 
+    private var licensePlate = ""
+
+    private val databaseCar: DatabaseReference by lazy {
+        Firebase.database.reference.child("Car")
+    }
+
+    private val databaseParking: DatabaseReference by lazy {
+        Firebase.database.reference.child("Parking")
+    }
+
+    private val database: DatabaseReference by lazy {
+        Firebase.database.reference
+    }
+
+    private lateinit var databaseTime: DatabaseReference
+    private var parking: Parking? = null
+    private val slots = arrayListOf<Slot>()
+
+    private var posSlot: Int = 0
+    private var timeId: String = ""
+
+    private var time_in = 0L
+    private var time_out = 0L
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
@@ -58,7 +102,101 @@ class ScanFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        initView()
+
+        parking = PrefManager.get<Parking>(PrefManager.PARKING)
+
         initClick()
+
+        test()
+    }
+
+    private fun test() {
+        licensePlate = "30M3-6923"
+        tv_license_plate_value.text = licensePlate
+
+        databaseCar.child(licensePlate).addListenerForSingleValueEvent(object :
+            ValueEventListener {
+            override fun onCancelled(p0: DatabaseError) {
+            }
+
+            override fun onDataChange(p0: DataSnapshot) {
+                var car: Car? = null
+                time_in = System.currentTimeMillis()
+                if(p0.exists()) {
+                    car = p0.getValue(Car::class.java)
+                    car?.let {
+                        if(it.time_in == 0L) {
+                            updateUI(true, it)
+                            bindSlot()
+                        } else {
+                            updateUI(false, it)
+                        }
+                    }
+                } else {
+                    ln_pick_slot.visibility = View.VISIBLE
+                    sp_pick_slot_value.visibility = View.VISIBLE
+
+                    tv_time_in_value.text = fmTimeStamp(time_in)
+                    bindSlot()
+                }
+            }
+        })
+    }
+
+    private fun initView() {
+        sp_pick_slot_value.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: AdapterView<*>?) {
+            }
+
+            override fun onItemSelected(
+                parent: AdapterView<*>?,
+                view: View?,
+                position: Int,
+                id: Long
+            ) {
+                posSlot = slots.get(position).name
+            }
+
+        }
+    }
+
+    private fun bindSlot() {
+        database.child("Slot").child(parking!!.id.toString()).orderByChild("status").equalTo(false)
+            .addListenerForSingleValueEvent(object :
+            ValueEventListener {
+            override fun onCancelled(p0: DatabaseError) {
+
+            }
+
+            override fun onDataChange(p0: DataSnapshot) {
+                Log.d(CategoryFragment.TAG, "${p0.key} - ${p0.value}")
+                p0.children.forEach {
+                    val slot = it.getValue(Slot::class.java)
+                    slot?.let {
+                        slots.add(it)
+                    }
+                }
+                if(slots.isNullOrEmpty()) {
+                    Toast.makeText(context, "Full of Slot. Please come back later!", Toast.LENGTH_SHORT).show()
+                    Handler().postDelayed({
+                        exitScreen()
+                    }, 3000)
+                } else {
+                    posSlot = slots.get(0).name
+                    updateSpinner()
+                }
+            }
+        })
+    }
+
+    private fun updateSpinner() {
+        val items = ArrayList<Int>()
+        slots.forEach {
+            items.add(it.name)
+        }
+        val adapter = ArrayAdapter(context!!, android.R.layout.simple_spinner_dropdown_item, items)
+        sp_pick_slot_value.adapter = adapter
     }
 
     private fun initClick() {
@@ -88,11 +226,88 @@ class ScanFragment : Fragment() {
         }
 
         btn_cancel.setOnClickListener {
-
+            findNavController().popBackStack()
         }
 
         btn_success.setOnClickListener {
+            databaseTime = Firebase.database.reference.child("Time").child(fmToDay()).child(parking!!.id.toString())
+            databaseCar.child(licensePlate).addListenerForSingleValueEvent(object :
+                ValueEventListener {
+                override fun onCancelled(p0: DatabaseError) {
+                }
 
+                override fun onDataChange(p0: DataSnapshot) {
+                    var car: Car? = null
+                    if(p0.exists()) {
+                        car = p0.getValue(Car::class.java)
+                        car?.let {
+                            if(it.time_in == 0L) {
+                                initTime()
+                                updateParking(true)
+                                updateCar(true)
+                                updateSlotIn()
+                            } else {
+                                updateTime(it)
+                                updateParking(false)
+                                updateCar(false)
+                                updateSlotOut(it)
+                            }
+                        }
+                    } else {
+                        initTime()
+                        updateParking(true)
+                        updateCar(true)
+                        updateSlotIn()
+                    }
+                    exitScreen()
+                }
+            })
+        }
+    }
+
+    private fun updateParking(isCheckIn: Boolean) {
+        if(isCheckIn) {
+            parking!!.remain--
+        } else {
+            parking!!.remain++
+        }
+        databaseParking.child(parking!!.id.toString()).setValue(parking!!)
+        PrefManager.put(PrefManager.PARKING, parking!!)
+    }
+
+    private fun updateTime(car: Car) {
+        databaseTime = Firebase.database.reference.child("Time").child(fmNormalDay(car.time_in)).child(car.parking.toString())
+        databaseTime.child(car.slot.toString()).child(car.time_id).child("time_out").setValue(time_out)
+        databaseTime.child(car.slot.toString()).child(car.time_id).child("fee").setValue(1)
+    }
+
+    private fun initTime() {
+        timeId = databaseTime.child(posSlot.toString()).push().key!!
+
+        val time = Time(licensePlate, time_in)
+
+        databaseTime.child(posSlot.toString()).child(timeId).setValue(time)
+
+    }
+
+    private fun exitScreen() {
+        findNavController().popBackStack()
+    }
+
+    private fun updateSlotIn() {
+        database.child("Slot").child(parking!!.id.toString()).child(posSlot.toString()).child("status").setValue(true)
+    }
+
+    private fun updateSlotOut(car: Car) {
+        database.child("Slot").child(car.parking.toString()).child(car.slot.toString()).child("status").setValue(false)
+    }
+
+    private fun updateCar(isCheckIn: Boolean) {
+        if(isCheckIn) {
+            val car = Car(System.currentTimeMillis(), 0, parking!!.id, posSlot, timeId)
+            databaseCar.child(licensePlate).setValue(car)
+        } else {
+            databaseCar.child(licensePlate).setValue(Car())
         }
     }
 
@@ -292,12 +507,58 @@ class ScanFragment : Fragment() {
             for (i in 0 until items.size()) {
                 val textBlock = items.valueAt(i)
                 var value = textBlock.value
-                value = value.replace("\n", " - ")
+                value = value.replace("-", "").replace("\n", "-").replace(".", "")
                 stringBuilder.append(value)
                 Log.d("TAG", value)
             }
 
-            tv_license_plate.text = stringBuilder.toString()
+            licensePlate = stringBuilder.toString()
+            tv_license_plate_value.text = licensePlate
+
+            databaseCar.child(licensePlate).addListenerForSingleValueEvent(object :
+                ValueEventListener {
+                override fun onCancelled(p0: DatabaseError) {
+                }
+
+                override fun onDataChange(p0: DataSnapshot) {
+                    var car: Car? = null
+                    time_in = System.currentTimeMillis()
+                    if(p0.exists()) {
+                        car = p0.getValue(Car::class.java)
+                        car?.let {
+                            if(it.time_in == 0L) {
+                                updateUI(true, it)
+                                bindSlot()
+                            } else {
+                                updateUI(false, it)
+                            }
+                        }
+                    } else {
+                        ln_pick_slot.visibility = View.VISIBLE
+                        sp_pick_slot_value.visibility = View.VISIBLE
+
+                        tv_time_in_value.text = fmTimeStamp(time_in)
+                        bindSlot()
+                    }
+                }
+            })
+        }
+    }
+
+    private fun updateUI(isGoIn: Boolean, car: Car) {
+        if(isGoIn) {
+            ln_pick_slot.visibility = View.VISIBLE
+            sp_pick_slot_value.visibility = View.VISIBLE
+
+            tv_time_in_value.text = fmTimeStamp(time_in)
+        } else {
+            ln_time_out.visibility = View.VISIBLE
+            ln_fee.visibility = View.VISIBLE
+
+            time_in = car.time_in
+            time_out = System.currentTimeMillis()
+            tv_time_in_value.text = fmTimeStamp(car.time_in)
+            tv_time_out_value.text = fmTimeStamp(time_out)
         }
     }
 
@@ -329,6 +590,7 @@ class ScanFragment : Fragment() {
         return BitmapFactory.decodeFile(filePath, o2)
     }
 
+    @SuppressLint("ObsoleteSdkInt")
     private fun getFilePath(context: Context, uri: Uri): String? {
         var uri = uri
         var selection: String? = null
